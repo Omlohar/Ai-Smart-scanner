@@ -141,7 +141,9 @@ export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | nu
 }
 
 function sanitizeSpeechText(text: string): string {
-  return text.replace(/[*_`~#]/g, ' ').trim();
+  // Replace markdown/special characters with spaces of equal length without trimming
+  // This ensures character indices (event.charIndex) strictly match the original text offsets
+  return text.replace(/[*_`~#]/g, ' ');
 }
 
 /**

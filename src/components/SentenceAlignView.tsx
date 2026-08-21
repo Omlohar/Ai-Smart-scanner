@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Volume2, Sparkles, Copy, Check, Headphones, BookOpen } from 'lucide-react';
 import { FontSize, LessonData } from '../types';
 import { speakText, speakBilingualPair, stopSpeech, playSound } from '../utils/speech';
@@ -21,6 +21,12 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [showPhonetics, setShowPhonetics] = useState(true);
 
+  // Live word tracking
+  const [activeCharIndex, setActiveCharIndex] = useState<number | null>(null);
+  const [activeLang, setActiveLang] = useState<'en' | 'hi'>('en');
+  const fallbackTimerRef = useRef<number | null>(null);
+  const hadBoundaryRef = useRef<boolean>(false);
+
   const sentences = lesson.alignedSentences || [];
 
   const fontClass = {
@@ -30,19 +36,115 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
     xxlarge: 'text-2xl leading-loose',
   }[fontSize];
 
+  useEffect(() => {
+    return () => {
+      if (fallbackTimerRef.current) {
+        clearInterval(fallbackTimerRef.current);
+      }
+      stopSpeech();
+    };
+  }, []);
+
+  // Auto-scroll active card / word into view when playing
+  useEffect(() => {
+    if (playingSentenceId === null) return;
+    const cardEl = document.getElementById(`sent-align-card-${playingSentenceId}`);
+    if (cardEl) {
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [playingSentenceId]);
+
+  const clearTicker = () => {
+    if (fallbackTimerRef.current) {
+      clearInterval(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+    hadBoundaryRef.current = false;
+    setActiveCharIndex(null);
+  };
+
+  const startWordTicker = (text: string, lang: 'en' | 'hi') => {
+    clearTicker();
+    hadBoundaryRef.current = false;
+
+    const chunks = text.split(/(\s+|[.,!?;:।—"()]+)/);
+    let offset = 0;
+    const words: { word: string; startOffset: number; endOffset: number }[] = [];
+    chunks.forEach((chunk) => {
+      const start = offset;
+      const end = offset + chunk.length;
+      offset = end;
+      if (!chunk || !/^[A-Za-z0-9\u0900-\u097F'-]+$/.test(chunk)) return;
+      words.push({ word: chunk, startOffset: start, endOffset: end });
+    });
+
+    if (words.length === 0) return;
+
+    // Immediately highlight first word
+    setActiveCharIndex(words[0].startOffset);
+
+    // Realistic speech timing: Children speech speed is ~1.8 to 2.2 words per second (at rate ~0.8)
+    const effectiveRate = Math.max(0.5, Math.min(1.8, speechRate || 0.8));
+    let curMs = 0;
+    const timings = words.map((w) => {
+      const startMs = curMs;
+      const len = Math.max(1, w.word.length);
+      let durationMs = (320 + len * (lang === 'hi' ? 55 : 45)) / effectiveRate;
+      curMs += durationMs;
+      return {
+        ...w,
+        startMs,
+        endMs: curMs,
+      };
+    });
+
+    const startTime = Date.now();
+
+    fallbackTimerRef.current = window.setInterval(() => {
+      if (hadBoundaryRef.current) {
+        if (fallbackTimerRef.current) {
+          clearInterval(fallbackTimerRef.current);
+          fallbackTimerRef.current = null;
+        }
+        return;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const active =
+        timings.find((t) => elapsed >= t.startMs && elapsed < t.endMs) ||
+        (elapsed >= timings[timings.length - 1].endMs ? timings[timings.length - 1] : timings[0]);
+      if (active) {
+        setActiveCharIndex(active.startOffset);
+      }
+    }, 60);
+  };
+
   const handlePlaySentence = (sentence: string, lang: 'en' | 'hi', id: number, mode: 'en' | 'hi' | 'phonetic') => {
     playSound('click');
     setPlayingSentenceId(id);
     setPlayingMode(mode);
+    setActiveLang(lang);
+
+    startWordTicker(sentence, lang);
 
     speakText(sentence, {
       lang: lang === 'en' ? 'en-US' : 'hi-IN',
       rate: speechRate,
+      onBoundary: (charIndex) => {
+        hadBoundaryRef.current = true;
+        if (fallbackTimerRef.current) {
+          clearInterval(fallbackTimerRef.current);
+          fallbackTimerRef.current = null;
+        }
+        setActiveCharIndex(charIndex);
+      },
       onEnd: () => {
+        clearTicker();
         setPlayingSentenceId(null);
         setPlayingMode(null);
       },
       onError: () => {
+        clearTicker();
         setPlayingSentenceId(null);
         setPlayingMode(null);
       },
@@ -53,10 +155,29 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
     playSound('click');
     setPlayingSentenceId(id);
     setPlayingMode('both');
+    setActiveLang('en');
+
+    startWordTicker(original, 'en');
 
     speakBilingualPair(original, translated, {
       rate: speechRate,
+      onLanguageChange: (l) => {
+        setActiveLang(l);
+        if (l === 'hi') {
+          startWordTicker(translated, 'hi');
+        }
+      },
+      onBoundary: (charIndex, _, l) => {
+        hadBoundaryRef.current = true;
+        if (fallbackTimerRef.current) {
+          clearInterval(fallbackTimerRef.current);
+          fallbackTimerRef.current = null;
+        }
+        setActiveCharIndex(charIndex);
+        setActiveLang(l);
+      },
       onEnd: () => {
+        clearTicker();
         setPlayingSentenceId(null);
         setPlayingMode(null);
       },
@@ -75,6 +196,87 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
     } catch (e) {
       // fallback
     }
+  };
+
+  // Helper to parse words and check if active
+  const renderInteractiveText = (text: string, sentenceId: number, targetMode: 'en' | 'hi' | 'phonetic', isClickable: boolean) => {
+    const isThisPlaying =
+      playingSentenceId === sentenceId &&
+      (playingMode === targetMode ||
+        (playingMode === 'both' && (activeLang === targetMode || (activeLang === 'hi' && targetMode === 'hi'))));
+
+    const chunks = text.split(/(\s+)/);
+    let offset = 0;
+
+    // Pre-calculate word spans for accurate boundary matching
+    const tokenSpans: { chunk: string; start: number; end: number; isWord: boolean }[] = [];
+    chunks.forEach((chunk) => {
+      const start = offset;
+      const end = offset + chunk.length;
+      offset = end;
+      const isWord = /^[A-Za-z0-9\u0900-\u097F'-]+$/.test(chunk);
+      tokenSpans.push({ chunk, start, end, isWord });
+    });
+
+    const actualWords = tokenSpans.filter((t) => t.isWord);
+
+    // Resolve active token index based on activeCharIndex
+    let activeTokenStart: number | null = null;
+    if (isThisPlaying && activeCharIndex !== null && actualWords.length > 0) {
+      const exact = actualWords.find((w) => activeCharIndex >= w.start && activeCharIndex < w.end);
+      if (exact) {
+        activeTokenStart = exact.start;
+      } else {
+        for (let i = 0; i < actualWords.length; i++) {
+          const cur = actualWords[i];
+          const next = actualWords[i + 1];
+          if (activeCharIndex >= cur.start && (!next || activeCharIndex < next.start)) {
+            activeTokenStart = cur.start;
+            break;
+          }
+        }
+        if (activeTokenStart === null) {
+          activeTokenStart =
+            activeCharIndex < actualWords[0].start
+              ? actualWords[0].start
+              : actualWords[actualWords.length - 1].start;
+        }
+      }
+    }
+
+    return tokenSpans.map((token, cIdx) => {
+      if (!token.isWord) return <span key={cIdx}>{token.chunk}</span>;
+
+      const isWordActive = isThisPlaying && activeTokenStart === token.start;
+
+      return (
+        <span
+          key={cIdx}
+          id={`sent-align-word-${sentenceId}-${targetMode}-${token.start}`}
+          data-sentence-id={sentenceId}
+          data-lang={targetMode}
+          data-start={token.start}
+          data-end={token.end}
+          data-active={isWordActive ? 'true' : 'false'}
+          onClick={() => isClickable && onSelectWord(token.chunk)}
+          className={`inline-block mx-0.5 px-1 py-0.5 rounded-lg transition-all duration-100 ${
+            isClickable ? 'cursor-pointer select-none' : ''
+          } ${
+            isWordActive
+              ? targetMode === 'en'
+                ? 'bg-gradient-to-r from-amber-400 to-yellow-300 dark:from-amber-400 dark:to-yellow-400 text-slate-950 font-black shadow-md shadow-amber-400/50 ring-2 ring-amber-500 scale-110 z-20 animate-pulse'
+                : 'bg-gradient-to-r from-pink-400 to-rose-300 dark:from-pink-500 dark:to-rose-400 text-slate-950 font-black shadow-md shadow-pink-400/50 ring-2 ring-pink-500 scale-110 z-20 animate-pulse'
+              : isClickable
+              ? 'hover:bg-purple-200/80 dark:hover:bg-purple-900/80 hover:text-purple-900 dark:hover:text-purple-200'
+              : ''
+          }`}
+          title={isClickable ? 'टैप करके अर्थ देखें' : undefined}
+        >
+          {isWordActive && <span className="inline-block mr-0.5 text-xs animate-bounce">🔊</span>}
+          {token.chunk}
+        </span>
+      );
+    });
   };
 
   if (sentences.length === 0) {
@@ -119,6 +321,7 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
         {sentences.map((item, idx) => (
           <div
             key={item.id || idx}
+            id={`sent-align-card-${item.id}`}
             className={`p-4 sm:p-5 rounded-3xl bg-white dark:bg-slate-900 border transition-all ${
               playingSentenceId === item.id
                 ? 'border-purple-500 shadow-md shadow-purple-500/10 ring-2 ring-purple-400/30'
@@ -212,26 +415,13 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
 
             {/* Sentence Breakdown Box */}
             <div className="space-y-2.5 pt-1">
-              {/* 1. English Sentence with clickable words */}
+              {/* 1. English Sentence with clickable words and synchronized highlighting */}
               <div className={`p-3 rounded-2xl bg-purple-50/40 dark:bg-slate-800/40 border border-purple-100/60 dark:border-slate-800 text-slate-800 dark:text-slate-100 ${fontClass}`}>
                 <div className="text-[11px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400 mb-1 flex items-center gap-1">
                   <span>🇬🇧 English वाक्य:</span>
                 </div>
                 <p>
-                  {item.original.split(/(\s+)/).map((chunk, cIdx) => {
-                    const isWord = /^[A-Za-z0-9'-]+$/.test(chunk);
-                    if (!isWord) return <span key={cIdx}>{chunk}</span>;
-                    return (
-                      <span
-                        key={cIdx}
-                        onClick={() => onSelectWord(chunk)}
-                        className="cursor-pointer hover:bg-purple-200/80 dark:hover:bg-purple-900/80 hover:text-purple-900 dark:hover:text-purple-200 rounded px-1 py-0.5 transition-colors"
-                        title="टैप करके अर्थ देखें"
-                      >
-                        {chunk}
-                      </span>
-                    );
-                  })}
+                  {renderInteractiveText(item.original, item.id, 'en', true)}
                 </p>
               </div>
 
@@ -243,17 +433,19 @@ export const SentenceAlignView: React.FC<SentenceAlignViewProps> = ({
                     <span>🗣️ हिंदी में उच्चारण (How to Read):</span>
                   </div>
                   <p className="font-semibold text-sm sm:text-base leading-relaxed tracking-wide">
-                    {item.phoneticHindi}
+                    {renderInteractiveText(item.phoneticHindi, item.id, 'hi', false)}
                   </p>
                 </div>
               )}
 
-              {/* 3. Hindi Translation (हिंदी अर्थ) */}
+              {/* 3. Hindi Translation (हिंदी अर्थ) with synchronized highlighting */}
               <div className={`p-3 rounded-2xl bg-pink-50/50 dark:bg-slate-800/50 border border-pink-100/80 dark:border-slate-800 text-slate-800 dark:text-pink-100 font-medium ${fontClass}`}>
                 <div className="text-[11px] font-bold uppercase tracking-wider text-pink-700 dark:text-pink-400 mb-1 flex items-center gap-1">
                   <span>🇮🇳 सरल हिंदी अर्थ (Hindi Meaning):</span>
                 </div>
-                <p>{item.translated}</p>
+                <p>
+                  {renderInteractiveText(item.translated, item.id, 'hi', false)}
+                </p>
               </div>
             </div>
           </div>

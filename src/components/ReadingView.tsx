@@ -82,11 +82,6 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   const [copiedEng, setCopiedEng] = useState(false);
   const [copiedHin, setCopiedHin] = useState(false);
 
-  // Fallback ticker ref for devices where native browser onboundary is sparse
-  const fallbackTimerRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const hadBoundaryEventRef = useRef<boolean>(false);
-
   // Dynamic font sizing classes for young readers
   const fontClass = {
     normal: 'text-base sm:text-lg leading-relaxed',
@@ -201,6 +196,82 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
     };
   }, []);
 
+  // Reference to current speech word timings for smart synchronization
+  const fallbackTimerRef = useRef<number | null>(null);
+  const hadBoundaryEventRef = useRef<boolean>(false);
+  const activeCharIndexRef = useRef<number | null>(null);
+
+  /**
+   * Helper function to find active word in a sentence using strict boundary mapping
+   */
+  const getActiveWordInSentence = (sentence: SentenceSpan, charIndex: number): WordSpan | null => {
+    const actualWords = sentence.words.filter((w) => w.isWord);
+    if (actualWords.length === 0) return null;
+
+    // 1. Exact range hit inside word span: [startIndex, endIndex)
+    const exact = actualWords.find((w) => charIndex >= w.startIndex && charIndex < w.endIndex);
+    if (exact) return exact;
+
+    // 2. Nearest word matching boundary (handles trailing punctuation or inter-word whitespace)
+    for (let i = 0; i < actualWords.length; i++) {
+      const current = actualWords[i];
+      const next = actualWords[i + 1];
+      if (charIndex >= current.startIndex && (!next || charIndex < next.startIndex)) {
+        return current;
+      }
+    }
+
+    if (charIndex < actualWords[0].startIndex) {
+      return actualWords[0];
+    }
+    return actualWords[actualWords.length - 1];
+  };
+
+  /**
+   * Resolved active word start offset for highlighting
+   */
+  const activeSpokenWordId = useMemo(() => {
+    if (activeCharIndex === null || speakingType === 'none') return null;
+    const currentStructure = activeLang === 'en' ? structuredEnglish : structuredHindi;
+
+    for (const paragraph of currentStructure) {
+      for (const sentence of paragraph.sentences) {
+        if (activeCharIndex >= sentence.startIndex && activeCharIndex <= sentence.endIndex + 2) {
+          const activeWord = getActiveWordInSentence(sentence, activeCharIndex);
+          return activeWord ? activeWord.startIndex : null;
+        }
+      }
+    }
+
+    // Global fallback across all words in the structured document
+    const allWords = currentStructure
+      .flatMap((p) => p.sentences.flatMap((s) => s.words))
+      .filter((w) => w.isWord);
+    if (allWords.length === 0) return null;
+
+    const closest =
+      allWords.find((w) => activeCharIndex >= w.startIndex && activeCharIndex < w.endIndex) ||
+      allWords.filter((w) => w.startIndex <= activeCharIndex).pop() ||
+      allWords[0];
+    return closest ? closest.startIndex : null;
+  }, [activeCharIndex, activeLang, speakingType, structuredEnglish, structuredHindi]);
+
+  /**
+   * Maps current character index to DOM elements and auto-scrolls into viewport
+   */
+  useEffect(() => {
+    if (activeSpokenWordId === null || speakingType === 'none') return;
+    const targetElementId = `reading-word-${activeLang}-${activeSpokenWordId}`;
+    const element = document.getElementById(targetElementId);
+    if (element) {
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    }
+  }, [activeSpokenWordId, activeLang, speakingType]);
+
   /**
    * Updates currently spoken word and sentence labels from activeCharIndex
    */
@@ -214,53 +285,17 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
     const currentStructure = activeLang === 'en' ? structuredEnglish : structuredHindi;
     for (const paragraph of currentStructure) {
       for (const sentence of paragraph.sentences) {
-        if (activeCharIndex >= sentence.startIndex && activeCharIndex < sentence.endIndex) {
+        if (activeCharIndex >= sentence.startIndex && activeCharIndex <= sentence.endIndex + 2) {
           setSpokenSentenceText(sentence.text.trim());
-          for (const word of sentence.words) {
-            if (word.isWord && activeCharIndex >= word.startIndex && activeCharIndex < word.endIndex) {
-              setSpokenWordText(word.text);
-              return;
-            }
+          const activeWord = getActiveWordInSentence(sentence, activeCharIndex);
+          if (activeWord) {
+            setSpokenWordText(activeWord.text);
           }
           return;
         }
       }
     }
   }, [activeCharIndex, activeLang, speakingType, structuredEnglish, structuredHindi]);
-
-  /**
-   * Helper fallback ticker to guarantee smooth word progression if device onboundary is silent
-   */
-  const startFallbackTicker = (wordsList: WordSpan[], lang: 'en' | 'hi') => {
-    if (fallbackTimerRef.current) {
-      clearInterval(fallbackTimerRef.current);
-    }
-    hadBoundaryEventRef.current = false;
-    startTimeRef.current = Date.now();
-
-    const actualWords = wordsList.filter((w) => w.isWord);
-    if (actualWords.length === 0) return;
-
-    const wordsPerSec = (lang === 'hi' ? 2.2 : 2.4) * speechRate;
-    const msPerWord = Math.max(200, 1000 / wordsPerSec);
-
-    let wordIdx = 0;
-    fallbackTimerRef.current = window.setInterval(() => {
-      if (hadBoundaryEventRef.current) return;
-
-      const elapsed = Date.now() - startTimeRef.current;
-      const calculatedIndex = Math.min(actualWords.length - 1, Math.floor(elapsed / msPerWord));
-
-      if (calculatedIndex !== wordIdx && calculatedIndex < actualWords.length) {
-        wordIdx = calculatedIndex;
-        const activeWord = actualWords[wordIdx];
-        if (activeWord) {
-          setActiveCharIndex(activeWord.startIndex);
-          setActiveCharLength(activeWord.text.length);
-        }
-      }
-    }, 70);
-  };
 
   const clearFallbackTicker = () => {
     if (fallbackTimerRef.current) {
@@ -270,10 +305,69 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
   };
 
   /**
-   * Handle onBoundary event emitted by SpeechSynthesis
+   * Fallback ticker ONLY for environments where native onboundary is completely missing
+   */
+  const startFallbackTicker = (wordsList: WordSpan[], lang: 'en' | 'hi') => {
+    clearFallbackTicker();
+    hadBoundaryEventRef.current = false;
+
+    const actualWords = wordsList.filter((w) => w.isWord);
+    if (actualWords.length === 0) return;
+
+    // Immediately highlight the initial word
+    activeCharIndexRef.current = actualWords[0].startIndex;
+    setActiveCharIndex(actualWords[0].startIndex);
+    setActiveCharLength(actualWords[0].text.length);
+
+    // Realistic speech timing: Children speech speed is ~1.8 to 2.2 words per second (at rate ~0.8)
+    const effectiveRate = Math.max(0.5, Math.min(1.8, speechRate || 0.8));
+    let curMs = 0;
+    const timings = actualWords.map((word) => {
+      const startMs = curMs;
+      const len = Math.max(1, word.text.length);
+      // Realistic syllable duration: base ~350ms + character length + rate scaling
+      let durationMs = (320 + len * (lang === 'hi' ? 55 : 45)) / effectiveRate;
+      curMs += durationMs;
+      return {
+        word,
+        startMs,
+        endMs: curMs,
+      };
+    });
+
+    const startTime = Date.now();
+
+    // Start fallback interval ONLY after a grace period, and only if native onboundary did not fire
+    fallbackTimerRef.current = window.setInterval(() => {
+      // If native onboundary has taken over, NEVER override it with synthetic timer
+      if (hadBoundaryEventRef.current) {
+        clearFallbackTicker();
+        return;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const activeTiming =
+        timings.find((t) => elapsed >= t.startMs && elapsed < t.endMs) ||
+        (elapsed >= timings[timings.length - 1].endMs
+          ? timings[timings.length - 1]
+          : timings[0]);
+
+      if (activeTiming && activeTiming.word.startIndex !== activeCharIndexRef.current) {
+        activeCharIndexRef.current = activeTiming.word.startIndex;
+        setActiveCharIndex(activeTiming.word.startIndex);
+        setActiveCharLength(activeTiming.word.text.length);
+      }
+    }, 60);
+  };
+
+  /**
+   * Handle onBoundary event emitted by SpeechSynthesis (Live voice engine synchronization)
    */
   const handleSpeechBoundary = (charIndex: number, charLength: number, lang?: 'en' | 'hi') => {
     hadBoundaryEventRef.current = true;
+    clearFallbackTicker(); // Native speech is active, disable fallback timer
+
+    activeCharIndexRef.current = charIndex;
     setActiveCharIndex(charIndex);
     setActiveCharLength(charLength || 0);
     if (lang) {
@@ -496,7 +590,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
       return false;
     }
     if (!word.isWord) return false;
-    return activeCharIndex >= word.startIndex && activeCharIndex < word.endIndex;
+    return activeSpokenWordId === word.startIndex;
   };
 
   /**
@@ -512,7 +606,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
     if (!highlightEnabled || activeCharIndex === null || speakingType === 'none' || activeLang !== lang) {
       return false;
     }
-    return activeCharIndex >= sentence.startIndex && activeCharIndex < sentence.endIndex;
+    return activeCharIndex >= sentence.startIndex && activeCharIndex <= sentence.endIndex + 1;
   };
 
   /**
@@ -524,6 +618,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
         {structuredEnglish.map((paragraph, pIdx) => (
           <div
             key={pIdx}
+            id={`reading-paragraph-en-${paragraph.id}`}
             className="group relative rounded-2xl p-2.5 sm:p-3 transition-colors hover:bg-purple-50/50 dark:hover:bg-slate-800/50"
           >
             <div className="space-y-2.5">
@@ -533,6 +628,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                 return (
                   <span
                     key={sentence.id}
+                    id={`reading-sentence-en-${sentence.id}`}
+                    data-start-index={sentence.startIndex}
+                    data-end-index={sentence.endIndex}
                     className={`inline rounded-2xl transition-all duration-150 relative ${
                       sentenceActive
                         ? 'bg-amber-100/90 dark:bg-amber-950/60 text-slate-900 dark:text-amber-100 ring-2 ring-amber-400 shadow-sm px-2 py-1 font-semibold'
@@ -549,6 +647,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                       return (
                         <span
                           key={wIdx}
+                          id={`reading-word-en-${chunk.startIndex}`}
+                          data-start-index={chunk.startIndex}
+                          data-end-index={chunk.endIndex}
                           onClick={() => {
                             playSound('click');
                             onSelectWord(chunk.text, sentence.text);
@@ -605,6 +706,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
         {structuredHindi.map((paragraph, pIdx) => (
           <div
             key={pIdx}
+            id={`reading-paragraph-hi-${paragraph.id}`}
             className="group relative rounded-2xl p-2.5 sm:p-3 transition-colors hover:bg-pink-50/50 dark:hover:bg-slate-800/50"
           >
             <div className="space-y-2.5">
@@ -614,6 +716,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                 return (
                   <span
                     key={sentence.id}
+                    id={`reading-sentence-hi-${sentence.id}`}
+                    data-start-index={sentence.startIndex}
+                    data-end-index={sentence.endIndex}
                     className={`inline rounded-2xl transition-all duration-150 ${
                       sentenceActive
                         ? 'bg-rose-100/90 dark:bg-pink-950/70 text-slate-900 dark:text-pink-100 ring-2 ring-pink-400 shadow-sm px-2 py-1 font-semibold'
@@ -630,6 +735,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({
                       return (
                         <span
                           key={wIdx}
+                          id={`reading-word-hi-${chunk.startIndex}`}
+                          data-start-index={chunk.startIndex}
+                          data-end-index={chunk.endIndex}
                           className={`inline-block mx-0.5 px-1 py-0.5 rounded-lg transition-all duration-100 ${
                             wordActive
                               ? 'bg-gradient-to-r from-pink-400 to-rose-300 dark:from-pink-500 dark:to-rose-400 text-slate-950 font-black shadow-md shadow-pink-400/50 ring-2 ring-pink-500 scale-110 z-20 animate-pulse'
