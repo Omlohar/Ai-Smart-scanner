@@ -38,7 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
             <BookOpen className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-extrabold bg-gradient-to-r from-purple-700 via-purple-900 to-indigo-800 dark:from-purple-300 dark:via-pink-200 dark:to-indigo-200 bg-clip-text text-transparent tracking-tight">
                 स्मार्ट स्कैनर वाचक
               </h1>
@@ -55,9 +55,15 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>DOLBY HD</span>
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              English पढ़ना और Hindi में समझना अब बिल्कुल आसान!
-            </p>
+            <div className="flex items-center gap-2 flex-wrap text-xs mt-0.5">
+              <span className="font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-200/70 dark:border-purple-800/60 text-[11px]">
+                ⚡ Ex Digital Solution
+              </span>
+              <span className="text-slate-400 dark:text-slate-500">•</span>
+              <span className="text-slate-600 dark:text-slate-300 font-medium text-[11px]">
+                Created by <strong className="text-purple-700 dark:text-purple-300 font-bold">Er. Pankaj Lohar</strong>
+              </span>
+            </div>
           </div>
         </div>
 

@@ -138,6 +138,24 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
               पाठ पढ़ने के बाद <strong>"अभ्यास क्विज"</strong> टैब पर जाकर 3-4 मज़ेदार सवाल हल करें और नए शब्द पक्के करें!
             </p>
           </div>
+
+          {/* Developer & Firm Credits Card */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white shadow-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-400/10 px-2.5 py-0.5 rounded-full border border-amber-400/30">
+                ⚡ EX Digital Solution
+              </span>
+              <span className="text-[11px] text-purple-200">Official Creator</span>
+            </div>
+            <div className="pt-1">
+              <p className="text-sm font-extrabold text-white">
+                निर्माता / डेवलपर: <span className="text-amber-300">Er. Pankaj Lohar</span> (इंजीनियर पंकज लोहार)
+              </p>
+              <p className="text-xs text-purple-200 mt-1 leading-relaxed">
+                बच्चों की शिक्षा को डिजिटल तकनीक व आर्टिफिशियल इंटेलिजेंस (AI) द्वारा सरल और रोचक बनाने हेतु समर्पित।
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}

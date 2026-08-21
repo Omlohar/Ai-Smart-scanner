@@ -532,14 +532,34 @@ export default function App() {
         onClose={() => setHelpOpen(false)}
       />
 
-      {/* Encouraging Footer */}
-      <footer className="mt-auto py-6 border-t border-purple-100 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-center text-xs text-slate-500 dark:text-slate-400">
-        <p className="font-semibold text-slate-700 dark:text-slate-300">
-          स्मार्ट स्कैनर वाचक • आपकी बेटी की English सीखने और पढ़ने की प्यारी साथी 💖
-        </p>
-        <p className="mt-1 text-[11px] text-slate-400">
-          कैमरा OCR • सरल बाल-सुलभ हिंदी अनुवाद • हिंदी उच्चारण (Phonetics) • ऑडियो वाचक • अभ्यास क्विज
-        </p>
+      {/* Professional & Encouraging Footer */}
+      <footer className="mt-auto py-8 border-t border-purple-100 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 text-center text-xs text-slate-500 dark:text-slate-400">
+        <div className="max-w-4xl mx-auto px-4 space-y-3">
+          {/* Main App & Creator Banner */}
+          <div className="inline-flex items-center justify-center gap-2 flex-wrap bg-gradient-to-r from-purple-50 via-pink-50 to-indigo-50 dark:from-slate-800/80 dark:via-purple-950/40 dark:to-slate-800/80 px-4 py-2 rounded-2xl border border-purple-200/80 dark:border-purple-800/60 shadow-xs">
+            <span className="font-extrabold bg-gradient-to-r from-purple-700 to-indigo-600 dark:from-purple-400 dark:to-indigo-300 bg-clip-text text-transparent text-sm">
+              ✨ Ex Digital Solution
+            </span>
+            <span className="text-purple-300 dark:text-purple-700">•</span>
+            <span className="font-bold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">
+              Created with ❤️ by <span className="text-purple-700 dark:text-purple-300 font-extrabold">Er. Pankaj Lohar (इंजीनियर पंकज लोहार)</span>
+            </span>
+          </div>
+
+          <p className="font-semibold text-slate-700 dark:text-slate-300 text-xs sm:text-sm">
+            स्मार्ट स्कैनर वाचक • बच्चों की English सीखने और पढ़ने की प्यारी साथी 💖
+          </p>
+
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-xl mx-auto">
+            AI कैमरा OCR • सरल बाल-सुलभ हिंदी अनुवाद • देवनागरी उच्चारण (Phonetics) • Dolby HD वाचक • शब्दावली व अभ्यास क्विज
+          </p>
+
+          <div className="pt-2 text-[10px] text-slate-400 dark:text-slate-600 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-center gap-3">
+            <span>© {new Date().getFullYear()} Ex Digital Solution. All Rights Reserved.</span>
+            <span>•</span>
+            <span>Innovating Education for Children</span>
+          </div>
+        </div>
       </footer>
     </div>
   );
