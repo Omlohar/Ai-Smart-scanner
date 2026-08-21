@@ -143,7 +143,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
           <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white shadow-lg space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black uppercase tracking-wider text-amber-400 bg-amber-400/10 px-2.5 py-0.5 rounded-full border border-amber-400/30">
-                ⚡ EX Digital Solution
+                ⚡ X Digital Solution
               </span>
               <span className="text-[11px] text-purple-200">Official Creator</span>
             </div>

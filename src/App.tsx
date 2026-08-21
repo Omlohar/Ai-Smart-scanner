@@ -538,7 +538,7 @@ export default function App() {
           {/* Main App & Creator Banner */}
           <div className="inline-flex items-center justify-center gap-2 flex-wrap bg-gradient-to-r from-purple-50 via-pink-50 to-indigo-50 dark:from-slate-800/80 dark:via-purple-950/40 dark:to-slate-800/80 px-4 py-2 rounded-2xl border border-purple-200/80 dark:border-purple-800/60 shadow-xs">
             <span className="font-extrabold bg-gradient-to-r from-purple-700 to-indigo-600 dark:from-purple-400 dark:to-indigo-300 bg-clip-text text-transparent text-sm">
-              ✨ Ex Digital Solution
+              ✨ X Digital Solution
             </span>
             <span className="text-purple-300 dark:text-purple-700">•</span>
             <span className="font-bold text-slate-700 dark:text-slate-200 text-xs sm:text-sm">
@@ -555,7 +555,7 @@ export default function App() {
           </p>
 
           <div className="pt-2 text-[10px] text-slate-400 dark:text-slate-600 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-center gap-3">
-            <span>© {new Date().getFullYear()} Ex Digital Solution. All Rights Reserved.</span>
+            <span>© {new Date().getFullYear()} X Digital Solution. All Rights Reserved.</span>
             <span>•</span>
             <span>Innovating Education for Children</span>
           </div>

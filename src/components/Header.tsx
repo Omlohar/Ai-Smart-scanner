@@ -57,7 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div className="flex items-center gap-2 flex-wrap text-xs mt-0.5">
               <span className="font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-200/70 dark:border-purple-800/60 text-[11px]">
-                ⚡ Ex Digital Solution
+                ⚡ X Digital Solution
               </span>
               <span className="text-slate-400 dark:text-slate-500">•</span>
               <span className="text-slate-600 dark:text-slate-300 font-medium text-[11px]">
