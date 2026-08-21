@@ -1,6 +1,10 @@
 /**
- * Speech synthesis & Audio effects utility
- * Specially tuned for English & Hindi learning for young students
+ * Universal Speech Synthesis & Audio Effects Utility
+ * Supports:
+ * - Native Web Speech API (Chrome / Safari / Edge)
+ * - Android WebView / AppsGeyser / PWA Online TTS Fallback
+ * - Auto audio unlocking for mobile devices
+ * - Bilingual playback (English -> Hindi)
  */
 
 export interface SpeechOptions {
@@ -14,15 +18,56 @@ export interface SpeechOptions {
 }
 
 let activeUtterance: SpeechSynthesisUtterance | null = null;
+let activeAudioFallback: HTMLAudioElement | null = null;
+let fallbackQueue: string[] = [];
+let fallbackLang = 'en';
+let fallbackOptions: SpeechOptions = {};
+let isFallbackPlaying = false;
 let cachedVoices: SpeechSynthesisVoice[] = [];
+let audioUnlocked = false;
 
-// Initialize & cache voices on load and when voices change
-if (typeof window !== 'undefined' && window.speechSynthesis) {
-  cachedVoices = window.speechSynthesis.getVoices() || [];
-  if (window.speechSynthesis.onvoiceschanged !== undefined) {
-    window.speechSynthesis.onvoiceschanged = () => {
-      cachedVoices = window.speechSynthesis.getVoices() || [];
-    };
+// Attempt to unlock audio context & speech synthesis on first user touch/click
+if (typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+
+    // 1. Resume AudioContext if suspended
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+      }
+    } catch {}
+
+    // 2. Warm up SpeechSynthesis
+    try {
+      if (window.speechSynthesis) {
+        cachedVoices = window.speechSynthesis.getVoices() || [];
+        // Silent utterance to unlock mobile WebView engine
+        const silentUtterance = new SpeechSynthesisUtterance(' ');
+        silentUtterance.volume = 0;
+        window.speechSynthesis.speak(silentUtterance);
+      }
+    } catch {}
+
+    window.removeEventListener('click', unlockAudio);
+    window.removeEventListener('touchstart', unlockAudio);
+  };
+
+  window.addEventListener('click', unlockAudio, { passive: true });
+  window.addEventListener('touchstart', unlockAudio, { passive: true });
+
+  if (window.speechSynthesis) {
+    cachedVoices = window.speechSynthesis.getVoices() || [];
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        cachedVoices = window.speechSynthesis.getVoices() || [];
+      };
+    }
   }
 }
 
@@ -34,9 +79,6 @@ export function getAvailableVoices(): SpeechSynthesisVoice[] {
   return cachedVoices;
 }
 
-/**
- * Returns true if a genuine Hindi voice is installed/available
- */
 export function hasHindiVoice(): boolean {
   const voices = getAvailableVoices();
   return voices.some(
@@ -49,15 +91,11 @@ export function hasHindiVoice(): boolean {
   );
 }
 
-/**
- * Find the most natural voice for Hindi or English
- */
 export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | null {
   const voices = getAvailableVoices();
   if (voices.length === 0) return null;
 
   if (langPrefix === 'hi') {
-    // 1. Exact Hindi (India) natural voices
     const exactHi = voices.find(
       (v) =>
         v.lang.toLowerCase() === 'hi-in' ||
@@ -71,7 +109,6 @@ export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | nu
     );
     if (exactHi) return exactHi;
 
-    // 2. Any voice containing 'hi' or 'hindi'
     const anyHi = voices.find(
       (v) =>
         v.lang.toLowerCase().startsWith('hi') ||
@@ -79,12 +116,8 @@ export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | nu
         v.name.toLowerCase().includes('हिन्दी')
     );
     if (anyHi) return anyHi;
-
-    // 3. If no Hindi voice exists, DO NOT force an English voice on Hindi text!
-    // Return null so the browser's native language tag `hi-IN` handles it cleanly
     return null;
   } else {
-    // English: Prefer Indian English (en-IN) for natural familiarity for Indian students
     const enInVoice = voices.find(
       (v) =>
         v.lang.toLowerCase().includes('en-in') ||
@@ -95,7 +128,6 @@ export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | nu
     );
     if (enInVoice) return enInVoice;
 
-    // Next, natural US/UK English
     const enVoice = voices.find(
       (v) =>
         v.lang.toLowerCase().includes('en-us') ||
@@ -108,68 +140,191 @@ export function getBestVoice(langPrefix: 'en' | 'hi'): SpeechSynthesisVoice | nu
   return null;
 }
 
-/**
- * Clean & normalize text before sending to speech synthesis while preserving character offsets
- */
 function sanitizeSpeechText(text: string): string {
-  return text
-    .replace(/[*_`~#]/g, ' ')
-    .trim();
+  return text.replace(/[*_`~#]/g, ' ').trim();
 }
 
 /**
- * Main Speak Function
+ * Split long text into small chunks for TTS audio endpoints (max ~150 chars per chunk)
+ */
+function splitTextIntoChunks(text: string, maxLen = 140): string[] {
+  const sentences = text.match(/[^.!?।\n]+[.!?।\n]*/g) || [text];
+  const chunks: string[] = [];
+
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.length <= maxLen) {
+      chunks.push(trimmed);
+    } else {
+      // Split by words if sentence is unusually long
+      const words = trimmed.split(' ');
+      let currentChunk = '';
+      for (const word of words) {
+        if ((currentChunk + ' ' + word).trim().length <= maxLen) {
+          currentChunk = (currentChunk + ' ' + word).trim();
+        } else {
+          if (currentChunk) chunks.push(currentChunk);
+          currentChunk = word;
+        }
+      }
+      if (currentChunk) chunks.push(currentChunk);
+    }
+  }
+
+  return chunks.length > 0 ? chunks : [text];
+}
+
+/**
+ * Play text using High-Definition Online Audio Stream (Failsafe for WebView / AppsGeyser)
+ */
+function speakViaAudioFallback(text: string, lang: string, options: SpeechOptions) {
+  stopSpeech();
+
+  const cleanText = sanitizeSpeechText(text);
+  if (!cleanText) {
+    options.onEnd?.();
+    return;
+  }
+
+  const langCode = lang.startsWith('hi') ? 'hi' : 'en';
+  fallbackQueue = splitTextIntoChunks(cleanText);
+  fallbackLang = langCode;
+  fallbackOptions = options;
+  isFallbackPlaying = true;
+
+  options.onStart?.();
+  playNextFallbackChunk();
+}
+
+function playNextFallbackChunk() {
+  if (!isFallbackPlaying || fallbackQueue.length === 0) {
+    isFallbackPlaying = false;
+    activeAudioFallback = null;
+    fallbackOptions.onEnd?.();
+    return;
+  }
+
+  const chunk = fallbackQueue.shift()!;
+  const encodedText = encodeURIComponent(chunk);
+  const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${fallbackLang}&q=${encodedText}`;
+
+  const audio = new Audio(audioUrl);
+  activeAudioFallback = audio;
+
+  if (fallbackOptions.rate && fallbackOptions.rate > 0.5 && fallbackOptions.rate <= 2) {
+    audio.playbackRate = fallbackOptions.rate;
+  }
+
+  audio.onended = () => {
+    if (isFallbackPlaying) {
+      // Small pause between chunks
+      setTimeout(() => {
+        playNextFallbackChunk();
+      }, 150);
+    }
+  };
+
+  audio.onerror = (e) => {
+    console.warn('Audio fallback chunk error:', e);
+    // Continue to next chunk or finish
+    if (fallbackQueue.length > 0) {
+      playNextFallbackChunk();
+    } else {
+      isFallbackPlaying = false;
+      activeAudioFallback = null;
+      fallbackOptions.onEnd?.();
+    }
+  };
+
+  const playPromise = audio.play();
+  if (playPromise !== undefined) {
+    playPromise.catch((err) => {
+      console.warn('Audio playback failed to start:', err);
+      // If blocked, finish gracefully
+      isFallbackPlaying = false;
+      activeAudioFallback = null;
+      fallbackOptions.onError?.(err);
+      fallbackOptions.onEnd?.();
+    });
+  }
+}
+
+/**
+ * Main Speak Function with Hybrid Native + Online Audio Failsafe
  */
 export function speakText(text: string, options: SpeechOptions = {}) {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
   stopSpeech();
 
   const cleanText = sanitizeSpeechText(text);
   if (!cleanText) return;
 
-  const utterance = new SpeechSynthesisUtterance(cleanText);
-  activeUtterance = utterance;
-
   const detectedLang = detectLanguage(cleanText);
   const requestedLang = options.lang || (detectedLang === 'hi' ? 'hi-IN' : 'en-US');
-  
-  utterance.lang = requestedLang;
-  utterance.rate = options.rate ?? (detectedLang === 'hi' ? 0.85 : 0.8);
-  utterance.pitch = options.pitch ?? 1.0;
-
   const langPrefix = requestedLang.startsWith('hi') ? 'hi' : 'en';
-  const voice = getBestVoice(langPrefix);
-  
-  if (voice) {
-    utterance.voice = voice;
+
+  // Check if native speechSynthesis is available and working
+  const canUseNative =
+    typeof window !== 'undefined' &&
+    !!window.speechSynthesis &&
+    !navigator.userAgent.toLowerCase().includes('wv'); // Some webviews claim to have speechSynthesis but it's silent
+
+  if (!canUseNative) {
+    speakViaAudioFallback(cleanText, requestedLang, options);
+    return;
   }
 
-  utterance.onstart = () => {
-    options.onStart?.();
-  };
-
-  utterance.onboundary = (event) => {
-    options.onBoundary?.(event.charIndex, event.charLength || 0);
-  };
-
-  utterance.onend = () => {
-    activeUtterance = null;
-    options.onEnd?.();
-  };
-
-  utterance.onerror = (e) => {
-    activeUtterance = null;
-    if (e.error !== 'canceled') {
-      options.onError?.(e);
-    }
-  };
-
-  // Speak with short safety timeout to prevent Chrome TTS hang bug
   try {
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    activeUtterance = utterance;
+
+    utterance.lang = requestedLang;
+    utterance.rate = options.rate ?? (detectedLang === 'hi' ? 0.85 : 0.8);
+    utterance.pitch = options.pitch ?? 1.0;
+
+    const voice = getBestVoice(langPrefix);
+    if (voice) {
+      utterance.voice = voice;
+    }
+
+    let hasStarted = false;
+
+    utterance.onstart = () => {
+      hasStarted = true;
+      options.onStart?.();
+    };
+
+    utterance.onboundary = (event) => {
+      options.onBoundary?.(event.charIndex, event.charLength || 0);
+    };
+
+    utterance.onend = () => {
+      activeUtterance = null;
+      options.onEnd?.();
+    };
+
+    utterance.onerror = (e) => {
+      activeUtterance = null;
+      if (e.error !== 'canceled') {
+        // Fallback to audio stream if native synthesis throws an error
+        speakViaAudioFallback(cleanText, requestedLang, options);
+      }
+    };
+
     window.speechSynthesis.speak(utterance);
+
+    // Watchdog timer: If native TTS fails to start within 400ms (common in Android WebView), trigger fallback!
+    setTimeout(() => {
+      if (activeUtterance === utterance && !hasStarted && !window.speechSynthesis.speaking) {
+        console.info('Native TTS silent/stuck, switching to HD Audio fallback...');
+        stopSpeech();
+        speakViaAudioFallback(cleanText, requestedLang, options);
+      }
+    }, 450);
   } catch (err) {
-    console.warn('Speech synthesis error:', err);
+    console.warn('Native speech error, fallback to audio stream:', err);
+    speakViaAudioFallback(cleanText, requestedLang, options);
   }
 }
 
@@ -189,6 +344,7 @@ export function speakBilingualPair(
 ) {
   options.onStart?.();
   options.onLanguageChange?.('en');
+
   speakText(englishText, {
     lang: 'en-US',
     rate: options.rate ?? 0.8,
@@ -196,7 +352,6 @@ export function speakBilingualPair(
       options.onBoundary?.(charIndex, charLength, 'en');
     },
     onEnd: () => {
-      // Pause 350ms between English and Hindi
       setTimeout(() => {
         options.onLanguageChange?.('hi');
         speakText(hindiText, {
@@ -221,30 +376,51 @@ export function speakBilingualPair(
 }
 
 export function pauseSpeech() {
+  if (isFallbackPlaying && activeAudioFallback) {
+    activeAudioFallback.pause();
+  }
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.pause();
   }
 }
 
 export function resumeSpeech() {
+  if (isFallbackPlaying && activeAudioFallback) {
+    activeAudioFallback.play().catch(() => {});
+  }
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.resume();
   }
 }
 
 export function stopSpeech() {
+  isFallbackPlaying = false;
+  fallbackQueue = [];
+
+  if (activeAudioFallback) {
+    try {
+      activeAudioFallback.pause();
+      activeAudioFallback.currentTime = 0;
+    } catch {}
+    activeAudioFallback = null;
+  }
+
   if (typeof window !== 'undefined' && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
     activeUtterance = null;
   }
 }
 
 export function isSpeaking(): boolean {
+  if (isFallbackPlaying) return true;
   if (typeof window === 'undefined' || !window.speechSynthesis) return false;
   return window.speechSynthesis.speaking;
 }
 
 export function isPaused(): boolean {
+  if (isFallbackPlaying && activeAudioFallback) return activeAudioFallback.paused;
   if (typeof window === 'undefined' || !window.speechSynthesis) return false;
   return window.speechSynthesis.paused;
 }
@@ -306,6 +482,6 @@ export function playSound(type: 'success' | 'click' | 'cheer' | 'scan') {
       });
     }
   } catch (e) {
-    // AudioContext blocked or not supported - non-blocking
+    // AudioContext blocked or not supported
   }
 }
