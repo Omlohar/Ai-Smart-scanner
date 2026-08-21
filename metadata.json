@@ -1,0 +1,6 @@
+{
+  "name": "स्मार्ट स्कैनर वाचक - Smart OCR & Hindi Reader",
+  "description": "Kid-friendly Smart OCR Scanner, English-to-Hindi learning reader, interactive word meanings, sentence alignment, vocabulary builder, and voice pronunciation tool.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
